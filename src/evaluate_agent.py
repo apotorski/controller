@@ -11,16 +11,11 @@ from environment import Environment
 
 
 def log_observation(observation: Tensor) -> None:
-    x, x_dot, theta, theta_dot = observation.squeeze()
-    logging.info(
-        f'Cart position = {x:.3f}, '
-        f'cart velocity = {x_dot:.3f}, '
-        f'pole angle = {theta:.3f}, '
-        f'pole angular velocity = {theta_dot:.3f}'
-    )
+    x, theta = observation.squeeze()
+    logging.info(f'Cart position = {x:.3f}, pole angle = {theta:.3f}')
 
 
-def main(agent_save_path: Path, episode_length: int) -> None:
+def main(agent_load_path: Path, episode_length: int) -> None:
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     logging.info(f'Evaluation device = \'{device}\'')
 
@@ -30,21 +25,30 @@ def main(agent_save_path: Path, episode_length: int) -> None:
         environment.observation_shape,
         environment.action_shape
     ).to(device)
-
-    policy.load_state_dict(torch.load(agent_save_path, weights_only=True))
-
+    policy.load_state_dict(torch.load(agent_load_path, weights_only=True))
     policy.eval()
+    logging.info('Agent loaded from \'{agent_load_path}\'')
 
-    reference_observation = torch.tensor([1.0, 0.0, 0.0, 0.0], device=device)
+    reference_observation = torch.tensor([1.0, 0.0], device=device)
 
     observation = environment.reset()
+
     log_observation(observation)
 
-    for _ in range(episode_length):
-        with torch.inference_mode():
-            action = policy(observation - reference_observation).mean
+    with torch.inference_mode():
+        memory = None
+        for _ in range(episode_length):
+            observation_error = observation - reference_observation
 
-        observation = environment(action)[0]
+            unsqueezed_observation_error = observation_error.unsqueeze(1)
+
+            unsqueezed_action_distribution, memory = \
+                policy(unsqueezed_observation_error, memory)
+            unsqueezed_action = unsqueezed_action_distribution.mean
+
+            action = unsqueezed_action.squeeze(1)
+
+            observation = environment(action)[0]
 
     log_observation(observation)
 
@@ -56,7 +60,7 @@ if __name__ == '__main__':
     )
 
     parser = argparse.ArgumentParser(description='Evaluate the agent.')
-    parser.add_argument('--agent_save_path', type=Path)
+    parser.add_argument('--agent_load_path', type=Path)
     parser.add_argument('--episode_length', type=int)
 
     args = parser.parse_args()

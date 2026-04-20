@@ -8,7 +8,7 @@ class Environment:
     _actor_number: int
     _device: torch.device
 
-    _observation_shape: tuple[int, ...] = (4,)
+    _observation_shape: tuple[int, ...] = (2,)
     _action_shape: tuple[int, ...] = (1,)
 
     _g: float = 9.807
@@ -44,7 +44,7 @@ class Environment:
         self._m_p_l = self._m_p*self._l
 
         max_start_state = torch.tensor(
-            [4.0, 0.01, torch.pi/8.0, 0.01],
+            [2.0, 0.01, torch.pi/4.0, 0.01],
             device=device
         )
         min_start_state = max_start_state.negative()
@@ -87,7 +87,7 @@ class Environment:
             x, x_dot, theta, theta_dot
         ]).clamp(self._min_state, self._max_state)
 
-        observations = self._states.clone()
+        observations = torch.column_stack([x, theta])
 
         x, u = self._states, actions
         costs = torch.einsum('bi,ij,bj->b', x, self._Q, x) \
@@ -101,7 +101,8 @@ class Environment:
         self._states = self._start_state_distribution \
             .sample(sample_shape=(self._actor_number,))
 
-        observations = self._states.clone()
+        x, _, theta, _ = self._states.split(split_size=1, dim=1)
+        observations = torch.column_stack([x, theta])
 
         return observations
 

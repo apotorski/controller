@@ -12,6 +12,7 @@ from environment import Environment
 from experience_buffer import ExperienceBuffer
 
 
+@torch.no_grad()
 def collect_episodes(
         policy: Policy,
         value_function: ValueFunction,
@@ -23,9 +24,15 @@ def collect_episodes(
     for episode_index in range(episode_number):
         observations = environment.reset()
 
+        memory = None
         for time_step in range(episode_length):
-            with torch.no_grad():
-                actions = policy(observations).sample()
+            unsqueezed_observations = observations.unsqueeze(1)
+
+            unsqueezed_action_distributions, memory = \
+                policy(unsqueezed_observations, memory)
+            unsqueezed_actions = unsqueezed_action_distributions.sample()
+
+            actions = unsqueezed_actions.squeeze(1)
 
             next_observations, rewards = environment(actions)
 
@@ -64,7 +71,8 @@ def update_agent(
                 advantages, rewards_to_go in data_loader:
             policy_optimizer.zero_grad()
 
-            action_logprobs = policy(observations).log_prob(actions)
+            action_distributions = policy(observations)[0]
+            action_logprobs = action_distributions.log_prob(actions)
 
             action_logprob_ratios = action_logprobs - previous_action_logprobs
             action_prob_ratios = action_logprob_ratios.exp()
@@ -79,7 +87,7 @@ def update_agent(
 
             value_function_optimizer.zero_grad()
 
-            values = value_function(observations)
+            values = value_function(observations)[0]
 
             loss = (rewards_to_go - values).square().mean()
 
@@ -90,6 +98,7 @@ def update_agent(
     value_function.eval()
 
 
+@torch.no_grad()
 def evaluate_agent(
         policy: Policy,
         environment: Environment,
@@ -98,9 +107,16 @@ def evaluate_agent(
     returns = 0.0
 
     observations = environment.reset()
+
+    memory = None
     for _ in range(episode_length):
-        with torch.no_grad():
-            actions = policy(observations).mean
+        unsqueezed_observations = observations.unsqueeze(1)
+
+        unsqueezed_action_distributions, memory = \
+            policy(unsqueezed_observations, memory)
+        unsqueezed_actions = unsqueezed_action_distributions.mean
+
+        actions = unsqueezed_actions.squeeze(1)
 
         observations, rewards = environment(actions)
         returns += rewards
@@ -118,7 +134,9 @@ def main(
         lambda_: float,
         beta: float,
         policy_learning_rate: float,
+        policy_weight_decay: float,
         value_function_learning_rate: float,
+        value_function_weight_decay: float,
         batch_size: int,
         epoch_number: int,
         iteration_number: int,
@@ -149,14 +167,16 @@ def main(
         environment.observation_shape
     ).to(device)
 
-    policy_optimizer = optim.AdamW(
+    policy_optimizer = optim.RMSprop(
         policy.parameters(),
-        policy_learning_rate
+        policy_learning_rate,
+        weight_decay=policy_weight_decay
     )
 
-    value_function_optimizer = optim.AdamW(
+    value_function_optimizer = optim.RMSprop(
         value_function.parameters(),
-        value_function_learning_rate
+        value_function_learning_rate,
+        weight_decay=value_function_weight_decay
     )
 
     policy.eval()
@@ -196,7 +216,7 @@ def main(
         )
 
     torch.save(policy.state_dict(), agent_save_path)
-    logging.info(f'Agent is saved to \'{agent_save_path}\'')
+    logging.info(f'Agent saved to \'{agent_save_path}\'')
 
 
 if __name__ == '__main__':
@@ -213,7 +233,9 @@ if __name__ == '__main__':
     parser.add_argument('--lambda_', type=float)
     parser.add_argument('--beta', type=float)
     parser.add_argument('--policy_learning_rate', type=float)
+    parser.add_argument('--policy_weight_decay', type=float)
     parser.add_argument('--value_function_learning_rate', type=float)
+    parser.add_argument('--value_function_weight_decay', type=float)
     parser.add_argument('--batch_size', type=int)
     parser.add_argument('--epoch_number', type=int)
     parser.add_argument('--iteration_number', type=int)
